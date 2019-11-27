@@ -1,0 +1,3 @@
+- name: Gather facts since it is skipped for VMWare deployment
+  gather_facts:
+    parallel: yes

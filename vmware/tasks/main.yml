@@ -1,0 +1,5 @@
+# Gets an IP from IPAM, updates DNS, and deploys a VM
+- import_tasks: ipam.yml
+- import_tasks: dns.yml
+- import_tasks: vmware.yml
+- import_tasks: inventory.yml

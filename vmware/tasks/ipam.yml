@@ -1,0 +1,66 @@
+- name: "[IPAM] Get API Token"
+  uri:
+    url: https://** redacted **/api/deploy/user
+    method: POST
+    headers:
+      Authorization: "Basic {{ api_auth_string | b64encode}}"
+    status_code: "200"
+    return_content: yes
+  register: api
+  delegate_to: localhost
+  run_once: yes
+
+- name: "[IPAM] Check if the host already has an entry"
+  uri:
+    url: "https://** redacted **/api/deploy/addresses/search_hostname/{{ inventory_hostname }}"
+    method: GET
+    headers:
+      phpipam-token: "{{ api.json.data.token }}"
+    body_format: form-urlencoded
+    status_code: "200"
+  register: ipam_ip
+  delegate_to: localhost
+
+- name: "[IPAM] Fail if subnet ID does not match provided variables"
+  fail:
+    msg: "[IPAM] Subnet ID from IPAM `{{ ipam_ip.json.data[0].subnetId }}` does not match subnet provided by variables `{{ ipam_subnet_id }}`."
+  when: ipam_ip.json.success and ipam_ip.json.data[0].subnetId | int != ipam_subnet_id | int
+  delegate_to: localhost
+
+- name: "[IPAM] Reserve new address"
+  uri:
+    url: "https://** redacted **/api/deploy/addresses/first_free/{{ ipam_subnet_id }}"
+    method: POST
+    headers:
+      phpipam-token: "{{ api.json.data.token }}"
+    body_format: form-urlencoded
+    body:
+      note: "Deployed with Ansible"
+      hostname: "{{ inventory_hostname }}"
+    status_code: "201"
+  register: new_ip
+  when: not ipam_ip.json.success
+  delegate_to: localhost
+  throttle: 1
+
+- name: "[IPAM] Get subnet info"
+  uri:
+    url: "https://** redacted **/api/deploy/subnets/{{ ipam_subnet_id }}"
+    method: GET
+    headers:
+      phpipam-token: "{{ api.json.data.token }}"
+    status_code: "200"
+  register: subnet_data
+  delegate_to: localhost
+
+- name: "[IPAM] Create a new `ip` varaible when host already exists"
+  set_fact:
+    ip: "{{ ipam_ip.json.data[0].ip }}"
+  when: ipam_ip.json.success
+  delegate_to: localhost
+
+- name: "[IPAM] Create a new `ip` variable when host does not already exist"
+  set_fact:
+    ip: "{{ new_ip.json.data }}"
+  when: not ipam_ip.json.success
+  delegate_to: localhost

@@ -1,0 +1,138 @@
+- name: Ensure that Vault secrets are initialized
+  local_action: command python /home/ansible/lab/scripts/initialize_sql_hv.py '{{ role_id }}' '{{ secret_id }}' '{{ secret_name }}'
+  register: vault_init
+  changed_when: vault_init.stdout == 'changes'
+
+- name: Read Vault secrets
+  set_fact:
+    vault: "{{ lookup('hashi_vault', 'url={{ vault_url }} secret=secret/sql/{{ secret_name }} auth_method=approle role_id={{ role_id }} secret_id={{ secret_id }}') }}"
+
+- name: Ensure MariaDB is installed
+  package:
+    name: mariadb-server
+    state: present
+
+- name: Ensure MariaDB is enabled
+  systemd:
+    name: mariadb
+    enabled: yes
+    daemon-reload: yes
+
+- name: Ensure Python MySQL support library is installed on Debian/Ubuntu
+  package:
+    name: python-mysqldb
+    state: present
+  when: ansible_os_family == 'Debian'
+
+- name: Ensure Python MySQL support library is installed on RedHat/CentOS 7
+  package:
+    name: MySQL-python
+    state: present
+  when: ansible_os_family == 'RedHat' and ansible_distribution_major_version == '7'
+
+- name: Ensure Python MySQL support library is installed on RedHat/CentOS 8
+  package:
+    name: python3-PyMySQL
+    state: present
+  when: ansible_os_family == 'RedHat' and ansible_distribution_major_version == '8'
+
+- name: Update /etc/my.cnf.d/mariadb-server.cnf
+  template:
+    src: mariadb-server.cnf.j2
+    dest: /etc/my.cnf.d/mariadb-server.cnf
+    owner: root
+    group: root
+    mode: 0644
+  notify: restart mariadb
+
+- name: Ensure mariadb is started
+  systemd:
+    name: mariadb
+    state: started
+
+## Replicate mysql_secure_install
+# Errors are ignored because this task will always fail if a host has already been initialized
+- name: Set root password
+  mysql_user:
+    user: root
+    password: '{{ vault.root_password }}'
+    host: localhost
+  ignore_errors: True
+
+# Remove aononymous users
+- name: Delete anonymous MySQL user for ansible_fqdn
+  mysql_user:
+    user: ''
+    host: '{{ ansible_fqdn }}'
+    state: absent
+    login_user: root
+    login_password: '{{ vault.root_password }}'
+
+- name: Delete anonymous MySQL user for localhost
+  mysql_user:
+    name: ''
+    state: absent
+    login_user: root
+    login_password: '{{ vault.root_password }}'
+
+# Remove remote access for root
+- name: Secure ::1 for root user
+  mysql_user:
+    user: root
+    password: '{{ vault.root_password }}'
+    host: '::1'
+    login_user: root
+    login_password: '{{ vault.root_password }}'
+
+- name: Secure 127.0.0.1 for root user
+  mysql_user:
+    user: root
+    password: '{{ vault.root_password }}'
+    host: '127.0.0.1'
+    login_user: root
+    login_password: '{{ vault.root_password }}'
+
+- name: Secure localhost for root user
+  mysql_user:
+    user: root
+    password: '{{ vault.root_password }}'
+    host: localhost
+    login_user: root
+    login_password: '{{ vault.root_password }}'
+
+# Remove test DB
+- name: Remove the test database
+  mysql_db:
+    db: test
+    state: absent
+    login_user: root
+    login_password: '{{ vault.root_password }}'
+
+# Add relevant user account
+- name: Add user account to match db_user from vault
+  mysql_user:
+    user: '{{ vault.db_user }}'
+    host: '{{ item }}'
+    password: '{{ vault.db_user_password }}'
+    priv: '{{ vault.db_name }}.*:ALL'
+    state: present
+    login_user: root
+    login_password: '{{ vault.root_password }}'
+  with_items: '{{ db_user_hosts }}'
+
+# Add relevant database
+- name: Add databse to match db_name from vault
+  mysql_db:
+    db: '{{ vault.db_name }}'
+    state: present
+    login_user: root
+    login_password: '{{ vault.root_password }}'
+
+# Allow MySQL through the firewall
+- name: Allow MySQL through firewalld
+  firewalld:
+    rich_rule: rule family=ipv4 source address='{{ item }}' port port=3306 protocol=tcp accept
+    permanent: yes
+    immediate: yes
+    state: enabled
+  with_items: '{{ db_user_hosts }}'

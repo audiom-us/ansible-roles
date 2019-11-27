@@ -1,0 +1,10 @@
+- name: "[DNS] Update record for new server"
+  nsupdate:
+    key_name: ansible
+    key_secret: "{{ pdns_tsig_key }}"
+    key_algorithm: hmac-md5
+    server: "** redacted **"
+    zone: "** redacted **"
+    record: "{{ inventory_hostname_short }}"
+    value: "{{ ip }}"
+  delegate_to: localhost

@@ -1,0 +1,64 @@
+- name: "[VMWare] Create the VM from template"
+  vmware_guest:
+    hostname: "{{ vcsa_hostname }}"
+    username: "{{ username }}"
+    password: "{{ password }}"
+    validate_certs: False
+    datacenter: Lab
+    esxi_hostname: "{{ vm_host }}"
+    folder: /
+    name: "{{ inventory_hostname_short }}"
+    state: poweredon
+    template: "{{ template }}"
+
+    cdrom:
+      type: none
+
+    disk:
+    - size_gb: "{{ os_disk_size_gb }}"
+      type: "{{ os_disk_type }}"
+      datastore: "{{ os_disk_datastore }}"
+
+    hardware:
+      memory_mb: "{{ vm_memory_mb }}"
+      num_cpus: "{{ vm_num_cpus }}"
+      num_cpu_cores_per_socket: 1
+      scsi: paravirtual
+
+    networks:
+    - name: "{{ vmware_network_name }}"
+      ip: "{{ ip }}"
+      netmask: "{{ subnet_data.json.data.calculation['Subnet netmask'] }}"
+      gateway: "{{ subnet_data.json.data.gateway.ip_addr }}"
+      start_connected: true
+
+    customization:
+      hostname: "{{ inventory_hostname_short }}"
+      domain: "** redacted **"
+      dns_servers:
+      - '** redacted **'
+
+    wait_for_ip_address: yes
+  register: deploy
+  delegate_to: localhost
+
+- name: "[VMWare] Add new disk(s) to the VM"
+  vmware_guest_disk:
+    hostname: "{{ vcsa_hostname }}"
+    username: "{{ username }}"
+    password: "{{ password }}"
+    validate_certs: False
+    datacenter: Lab
+    folder: /
+    name: "{{ inventory_hostname_short }}"
+
+    disk:
+      - size_gb: "{{ item.size }}"
+        type: "{{ item.type }}"
+        datastore: "{{ item.datastore }}"
+        scsi_controller: "{{ item.scsi_controller }}"
+        unit_number: "{{ item.unit_number }}"
+        scsi_type: "{{ item.scsi_type }}"
+        state: present
+  delegate_to: localhost
+  with_items: "{{ extra_disks | default([]) }}"
